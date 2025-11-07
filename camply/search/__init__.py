@@ -13,6 +13,7 @@ from camply.search.search_recreationdotgov import (
     SearchRecreationDotGovTicket,
     SearchRecreationDotGovTimedEntry,
 )
+from camply.search.search_camava import SearchSantaBarbaraCountyParks
 from camply.search.search_usedirect import (
     SearchAlabamaStateParks,
     SearchArizonaStateParks,
@@ -48,6 +49,8 @@ __search_providers__: List[Type[BaseCampingSearch]] = [
     SearchFairfaxCountyParks,
     SearchMaricopaCountyParks,
     SearchOregonMetro,
+    # Camava
+    SearchSantaBarbaraCountyParks,
     # Tours and Timed Entry (RecDotGov)
     SearchRecreationDotGovTicket,
     SearchRecreationDotGovTimedEntry,
