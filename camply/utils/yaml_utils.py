@@ -135,6 +135,7 @@ def yaml_file_to_arguments(
             "longitude": yaml_model.longitude,
             "radius": yaml_model.radius,
             "excluded_campsite_types": yaml_model.excluded_campsite_types,
+            "attribute_filters": yaml_model.attribute_filters,
         })
         search_kwargs = {
             "log": True,
