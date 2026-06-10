@@ -4,6 +4,7 @@ Camply Command Line Interface
 
 import concurrent
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -446,9 +447,10 @@ yaml_config_argument = click.option(
     "--yaml-config",
     "--yml-config",
     default=None,
-    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+    type=str,
     help="Rather than provide arguments to the command line utility, instead "
-    "pass a file path to a YAML configuration file. See the documentation "
+    "pass a file path to a YAML configuration file. Multiple files can be "
+    "specified separated by commas. See the documentation "
     "for more information on how to structure your configuration file.",
 )
 equipment_argument = click.option(
@@ -803,7 +805,7 @@ def campsites(
         context.debug = debug
         _set_up_debug(debug=context.debug)
 
-    # --- geo validation ---
+    # --- geo validation (CLI flags) ---
     any_geo = near is not None or latitude is not None or longitude is not None
     if near is not None and (latitude is not None or longitude is not None):
         logger.error("--near is mutually exclusive with --latitude/--longitude.")
@@ -819,98 +821,61 @@ def campsites(
         t.strip() for val in exclude_type for t in val.split(",") if t.strip()
     ] if exclude_type else []
 
+    configs = []
     if yaml_config is not None:
-        provider, provider_kwargs, search_kwargs = yaml_utils.yaml_file_to_arguments(
-            file_path=yaml_config
-        )
-        provider = _preferred_provider(context, provider)
-        if excluded_campsite_types:
-            provider_kwargs["excluded_campsite_types"] = excluded_campsite_types
-        # Extract geo fields added by yaml_file_to_arguments
-        _yaml_near = provider_kwargs.pop("near", None)
-        _yaml_lat = provider_kwargs.pop("latitude", None)
-        _yaml_lon = provider_kwargs.pop("longitude", None)
-        _yaml_radius = provider_kwargs.pop("radius", None)
-        if _yaml_near is not None or _yaml_lat is not None or _yaml_lon is not None:
-            if _yaml_radius is None:
-                logger.error(
-                    "radius is required in YAML config when using near/latitude/longitude."
-                )
-                sys.exit(1)
-            if _yaml_near is not None:
-                from camply.utils.geo_utils import geocode_location
-                _resolved_lat, _resolved_lon = geocode_location(_yaml_near)
-            else:
-                if _yaml_lat is None or _yaml_lon is None:
-                    logger.error(
-                        "Both latitude and longitude are required together in YAML config."
+        yaml_files = [f.strip() for f in yaml_config.split(",") if f.strip()]
+        for file_path in yaml_files:
+            if not os.path.exists(file_path):
+                raise click.BadParameter(f"YAML config file '{file_path}' does not exist.")
+            file_configs = yaml_utils.yaml_file_to_arguments(file_path=file_path)
+            for cfg_provider, cfg_provider_kwargs, cfg_search_kwargs in file_configs:
+                cfg_provider = _preferred_provider(context, cfg_provider)
+                if excluded_campsite_types:
+                    cfg_provider_kwargs["excluded_campsite_types"] = excluded_campsite_types
+                # Route YAML geo fields to SearchGeo
+                _yaml_near = cfg_provider_kwargs.pop("near", None)
+                _yaml_lat = cfg_provider_kwargs.pop("latitude", None)
+                _yaml_lon = cfg_provider_kwargs.pop("longitude", None)
+                _yaml_radius = cfg_provider_kwargs.pop("radius", None)
+                if _yaml_near is not None or _yaml_lat is not None or _yaml_lon is not None:
+                    if _yaml_radius is None:
+                        logger.error("radius required in YAML config when using near/latitude/longitude.")
+                        sys.exit(1)
+                    if _yaml_near is not None:
+                        from camply.utils.geo_utils import geocode_location
+                        _resolved_lat, _resolved_lon = geocode_location(_yaml_near)
+                    else:
+                        _resolved_lat, _resolved_lon = _yaml_lat, _yaml_lon
+                    cfg_provider_kwargs.pop("recreation_area", None)
+                    cfg_provider_kwargs.pop("campgrounds", None)
+                    cfg_provider_kwargs.pop("campsites", None)
+                    from camply.search.search_geo import SearchGeo
+                    camping_finder = SearchGeo(
+                        latitude=_resolved_lat,
+                        longitude=_resolved_lon,
+                        radius_miles=_yaml_radius,
+                        provider_filter=cfg_provider,
+                        **cfg_provider_kwargs,
                     )
-                    sys.exit(1)
-                _resolved_lat, _resolved_lon = _yaml_lat, _yaml_lon
-            provider_kwargs.pop("recreation_area", None)
-            provider_kwargs.pop("campgrounds", None)
-            provider_kwargs.pop("campsites", None)
-            from camply.search.search_geo import SearchGeo
-            camping_finder = SearchGeo(
-                latitude=_resolved_lat,
-                longitude=_resolved_lon,
-                radius_miles=_yaml_radius,
-                provider_filter=provider,
-                **provider_kwargs,
-            )
-            camping_finder.get_matching_campsites(**search_kwargs)
-            return
+                    camping_finder.get_matching_campsites(**cfg_search_kwargs)
+                    continue
+                configs.append((cfg_provider, cfg_provider_kwargs, cfg_search_kwargs))
     elif any_geo:
-        # Resolve coordinates
         if near is not None:
             from camply.utils.geo_utils import geocode_location
             resolved_lat, resolved_lon = geocode_location(near)
         else:
-            if latitude is None or longitude is None:
-                logger.error("Both --latitude and --longitude are required together.")
-                sys.exit(1)
             resolved_lat, resolved_lon = latitude, longitude
-
-        # Build kwargs directly (bypassing _get_provider_kwargs_from_cli to avoid
-        # RecreationDotGov-specific validation that requires rec_area/campground)
         search_windows = handle_search_windows(start_date=start_date, end_date=end_date)
-        days_of_the_week = (
-            {days_of_the_week_mapping[d] for d in day} if day else None
-        )
+        days_of_the_week = {days_of_the_week_mapping[d] for d in day} if day else None
         _notifications = make_list(notifications) if notifications else ["silent"]
-        _polling_interval = float(
-            polling_interval or SearchConfig.RECOMMENDED_POLLING_INTERVAL
-        )
+        _polling_interval = float(polling_interval or SearchConfig.RECOMMENDED_POLLING_INTERVAL)
         _notify_first_try = notify_first_try is not None
         _search_forever = search_forever is not None
-        _continuous = continuous or any(
-            [
-                len(_notifications) > 0 and _notifications != ["silent"],
-                _search_forever,
-                _notify_first_try,
-                polling_interval is not None,
-                search_once,
-            ]
-        )
-        provider_kwargs = {
-            "search_window": search_windows,
-            "weekends_only": weekends,
-            "nights": int(nights),
-            "offline_search": offline_search,
-            "offline_search_path": offline_search_path,
-            "days_of_the_week": days_of_the_week,
-        }
-        search_kwargs = {
-            "log": True,
-            "verbose": True,
-            "continuous": _continuous,
-            "polling_interval": _polling_interval,
-            "notify_first_try": _notify_first_try,
-            "notification_provider": _notifications,
-            "search_forever": _search_forever,
-            "search_once": search_once,
-        }
-
+        _continuous = continuous or any([
+            len(_notifications) > 0 and _notifications != ["silent"],
+            _search_forever, _notify_first_try, polling_interval is not None, search_once,
+        ])
         from camply.search.search_geo import SearchGeo
         camping_finder = SearchGeo(
             latitude=resolved_lat,
@@ -918,9 +883,19 @@ def campsites(
             radius_miles=radius,
             provider_filter=provider,
             excluded_campsite_types=excluded_campsite_types,
-            **provider_kwargs,
+            search_window=search_windows,
+            weekends_only=weekends,
+            nights=int(nights),
+            offline_search=offline_search,
+            offline_search_path=offline_search_path,
+            days_of_the_week=days_of_the_week,
         )
-        camping_finder.get_matching_campsites(**search_kwargs)
+        camping_finder.get_matching_campsites(
+            log=True, verbose=True, continuous=_continuous,
+            polling_interval=_polling_interval, notify_first_try=_notify_first_try,
+            notification_provider=_notifications, search_forever=_search_forever,
+            search_once=search_once,
+        )
         return
     else:
         provider = _preferred_provider(context, provider)
@@ -949,10 +924,11 @@ def campsites(
         )
         if excluded_campsite_types:
             provider_kwargs["excluded_campsite_types"] = excluded_campsite_types
-
-    provider_class: Type[BaseCampingSearch] = CAMPSITE_SEARCH_PROVIDER[provider]
-    camping_finder: BaseCampingSearch = provider_class(**provider_kwargs)
-    camping_finder.get_matching_campsites(**search_kwargs)
+        configs = [(provider, provider_kwargs, search_kwargs)]
+    for config_provider, config_provider_kwargs, config_search_kwargs in configs:
+        provider_class: Type[BaseCampingSearch] = CAMPSITE_SEARCH_PROVIDER[config_provider]
+        camping_finder: BaseCampingSearch = provider_class(**config_provider_kwargs)
+        camping_finder.get_matching_campsites(**config_search_kwargs)
 
 
 @camply_command_line.command(cls=RichCommand)

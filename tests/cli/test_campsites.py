@@ -610,3 +610,42 @@ def test_geo_radius_required(cli_runner: CamplyRunner) -> None:
     result = cli_runner.run_camply_command(command=test_command)
     assert "radius" in result.output.lower()
     cli_status_checker(result=result, exit_code_zero=False)
+
+
+@vcr_cassette
+def test_multiple_yaml_files(cli_runner: CamplyRunner) -> None:
+    """
+    Search for Campsites using multiple YAML files
+    """
+    test_command = """
+    camply \
+        campsites \
+        --yaml-config \
+        tests/yaml/example_search.yaml,tests/yaml/yosemite_search.yaml \
+        --search-once
+    """
+    result = cli_runner.run_camply_command(command=test_command)
+    assert "YAML File Parsed: example_search.yaml" in result.output
+    assert "YAML File Parsed: yosemite_search.yaml" in result.output
+    assert "Rocky Mountain National Park" in result.output
+    assert "Wawona Campground" in result.output
+    cli_status_checker(result=result, exit_code_zero=True)
+
+
+@vcr_cassette
+def test_multi_document_yaml(cli_runner: CamplyRunner) -> None:
+    """
+    Search for Campsites using multi-document YAML
+    """
+    test_command = """
+    camply \
+        campsites \
+        --yaml-config \
+        tests/yaml/multi_document.yaml \
+        --search-once
+    """
+    result = cli_runner.run_camply_command(command=test_command)
+    assert "YAML File Parsed: multi_document.yaml" in result.output
+    assert 'Using Camply Provider: "RecreationDotGov"' in result.output
+    assert 'Using Camply Provider: "GoingToCamp"' in result.output
+    cli_status_checker(result=result, exit_code_zero=True)
