@@ -14,6 +14,7 @@ from .recreation_dot_gov.recdotgov_tours import (
     RecreationDotGovTimedEntry,
 )
 from .camava.variations import SantaBarbaraCountyParks
+from .recreation_dot_gov.recdotgov_permits import RecreationDotGovPermit
 from .usedirect.variations import (
     AlabamaStateParks,
     ArizonaStateParks,
@@ -37,6 +38,7 @@ ProviderType = Union[
     RecreationDotGovDailyTimedEntry,
     RecreationDotGovTicket,
     RecreationDotGovTimedEntry,
+    RecreationDotGovPermit,
     Yellowstone,
     ReserveCalifornia,
     NorthernTerritory,
@@ -62,6 +64,7 @@ __all__ = [
     "RecreationDotGovDailyTimedEntry",
     "RecreationDotGovTicket",
     "RecreationDotGovTimedEntry",
+    "RecreationDotGovPermit",
     "Yellowstone",
     "ReserveCalifornia",
     "NorthernTerritory",
